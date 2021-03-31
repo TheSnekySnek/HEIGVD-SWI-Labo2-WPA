@@ -43,21 +43,26 @@ wpa=rdpcap("wpa_handshake.cap")
 # Important parameters for key derivation - most of them can be obtained from the pcap file
 passPhrase  = "actuelle"
 A           = "Pairwise key expansion" #this string is used in the pseudo-random function
-ssid        = "SWI"
-APmac       = a2b_hex("cebcc8fdcab7")
-Clientmac   = a2b_hex("0013efd015bd")
+# todo: documenter les 3 prochaines lignes
+ssid        = wpa[0].info.decode()
+APmac       = a2b_hex(wpa[1].addr2.replace(':', ''))
+Clientmac   = a2b_hex(wpa[1].addr1.replace(':', ''))
 
 # Authenticator and Supplicant Nonces
-ANonce      = a2b_hex("90773b9a9661fee1f406e8989c912b45b029c652224e8b561417672ca7e0fd91")
-SNonce      = a2b_hex("7b3826876d14ff301aee7c1072b5e9091e21169841bce9ae8a3f24628f264577")
+# todo: documenter
+ANonce      = wpa[5].load[13:32+13]
+# todo: documenter
+SNonce      = wpa[6].payload.payload[2].info[18:18+32]
 
 # This is the MIC contained in the 4th frame of the 4-way handshake
 # When attacking WPA, we would compare it to our own MIC calculated using passphrases from a dictionary
-mic_to_test = "36eef66540fa801ceee2fea9b7929b40"
+# todo: documenter
+mic_to_test = wpa[8].payload.payload.payload.payload.info[82:82+16]
 
 B           = min(APmac,Clientmac)+max(APmac,Clientmac)+min(ANonce,SNonce)+max(ANonce,SNonce) #used in pseudo-random function
 
-data        = a2b_hex("0103005f02030a0000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") #cf "Quelques détails importants" dans la donnée
+# todo: documenter
+data        = wpa[8].payload.payload.payload.payload.info[1:].replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
 
 print ("\n\nValues used to derivate keys")
 print ("============================")
