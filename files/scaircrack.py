@@ -106,9 +106,9 @@ for pkt in wpa:
                 SNonce = nonce
             elif src == Clientmac and dst == APmac and nonce == emptyNONCE and mic != emptyMIC:
                 print("M4")
-                mic_to_test = mic
-                data = pkt.payload.payload.payload.payload.info[1:].replace(a2b_hex(mic), b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
-
+                mic_to_test = a2b_hex(mic)
+                data = raw(pkt[EAPOL]).replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+                print(data)
     elif pkt.haslayer(Dot11AssoReq):
         dst = ''.join('%02x' % b for b in raw(pkt)[18:24]) # the mac is broken here for some reason so we have to get it manualy
         src = ''.join('%02x' % b for b in raw(pkt)[24:30])
@@ -137,7 +137,7 @@ B = min(a2b_hex(APmac),a2b_hex(Clientmac))+max(a2b_hex(APmac),a2b_hex(Clientmac)
 
 with open("wordlist.txt") as f:
     while(True):
-        passPhrase  = f.readline()
+        passPhrase  = f.readline().replace("\n", "")
 
         if passPhrase == "":
             break
