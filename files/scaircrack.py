@@ -76,12 +76,20 @@ emptyNONCE = b"0000000000000000000000000000000000000000000000000000000000000000"
 emptyMIC = b"00000000000000000000000000000000"
 
 for pkt in wpa:
+    if pkt.haslayer(Dot11) and APmac == "":
+        try:
+            if pkt.info.decode('ascii') == ssid:
+                APmac = pkt[Dot11].addr2.replace(":", "")
+                print("Found SSID MAC", APmac)
+        except Exception:
+            pass
+        
     if pkt.haslayer(EAPOL):
         src = pkt[Dot11].addr2.replace(":", "")
         dst = pkt[Dot11].addr1.replace(":", "")
         to_DS = pkt[Dot11].FCfield & 0x1 !=0
         from_DS = pkt[Dot11].FCfield & 0x2 !=0
-        if from_DS == True:
+        if from_DS == True and src == APmac:
             nonce = hexlify(pkt[Raw].load)[26:90]
             mic = hexlify(pkt[Raw].load)[154:186]
             if nonce != emptyNONCE and mic == emptyMIC:
@@ -90,7 +98,7 @@ for pkt in wpa:
                 ANonce = nonce
             elif src == APmac and dst == Clientmac and nonce != emptyNONCE and mic != emptyMIC:
                 print("M3")
-        elif to_DS == True:
+        elif to_DS == True and dst == APmac:
             nonce = hexlify(pkt[Raw].load)[26:90]
             mic = hexlify(pkt[Raw].load)[154:186]
             if src == Clientmac and dst == APmac and nonce != emptyNONCE and mic != emptyMIC:
@@ -105,7 +113,7 @@ for pkt in wpa:
         dst = ''.join('%02x' % b for b in raw(pkt)[18:24]) # the mac is broken here for some reason so we have to get it manualy
         src = ''.join('%02x' % b for b in raw(pkt)[24:30])
         to_DS = raw(pkt)[15] & 0x1 !=0
-        if to_DS == True:
+        if to_DS == True and dst == APmac:
             nonce = hexlify(pkt.payload.payload[2].info[18:18+32])
             mic = hexlify(pkt.payload.payload.payload.payload.info[82:82+16])
             if src == Clientmac and dst == APmac and nonce != emptyNONCE and mic != emptyMIC:
