@@ -44,9 +44,7 @@ APmac       = ""
 Clientmac   = ""
 
 # Authenticator and Supplicant Nonces
-# todo: documenter
 ANonce      = ""
-# todo: documenter
 SNonce      = ""
 
 # This is the MIC contained in the 4th frame of the 4-way handshake
