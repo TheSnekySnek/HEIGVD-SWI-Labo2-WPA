@@ -17,8 +17,7 @@ __email__ 		= "abraham.rubinstein@heig-vd.ch"
 __status__ 		= "Prototype"
 
 from scapy.all import *
-from binascii import a2b_hex, b2a_hex
-#from pbkdf2 import pbkdf2_hex
+from binascii import a2b_hex, b2a_hex, hexlify
 from pbkdf2 import *
 from numpy import array_split
 from numpy import array
@@ -43,35 +42,107 @@ wpa=rdpcap("wpa_handshake.cap")
 # Important parameters for key derivation - most of them can be obtained from the pcap file
 passPhrase  = "actuelle"
 A           = "Pairwise key expansion" #this string is used in the pseudo-random function
-# todo: documenter les 3 prochaines lignes
-ssid        = wpa[0].info.decode()
-APmac       = a2b_hex(wpa[1].addr2.replace(':', ''))
-Clientmac   = a2b_hex(wpa[1].addr1.replace(':', ''))
+ssid        = "SWI"
+APmac       = ""
+Clientmac   = ""
 
 # Authenticator and Supplicant Nonces
-# todo: documenter
-ANonce      = wpa[5].load[13:32+13]
-# todo: documenter
-SNonce      = wpa[6].payload.payload[2].info[18:18+32]
+ANonce      = ""
+SNonce      = ""
 
 # This is the MIC contained in the 4th frame of the 4-way handshake
 # When attacking WPA, we would compare it to our own MIC calculated using passphrases from a dictionary
-# todo: documenter
-mic_to_test = wpa[8].payload.payload.payload.payload.info[82:82+16]
+mic_to_test = ""
 
-B           = min(APmac,Clientmac)+max(APmac,Clientmac)+min(ANonce,SNonce)+max(ANonce,SNonce) #used in pseudo-random function
+data        = ""
 
-# todo: documenter
-data        = wpa[8].payload.payload.payload.payload.info[1:].replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+# Empty values to compare to
+emptyNONCE = b"0000000000000000000000000000000000000000000000000000000000000000"
+emptyMIC = b"00000000000000000000000000000000"
+
+# Iterate over each packet
+for pkt in wpa:
+    # Check if we have a 802.11 packet and haven't found the WiFi mac yet
+    if pkt.haslayer(Dot11) and APmac == "":
+        try:
+            # Check if the packet contains the right ssid 
+            if pkt.info.decode('ascii') == ssid:
+                #Register the mac of the ap
+                APmac = pkt[Dot11].addr2.replace(":", "")
+                print("Found SSID MAC", APmac)
+        except Exception:
+            pass
+    
+    # Check foe EAPOL packet
+    if pkt.haslayer(EAPOL):
+        src = pkt[Dot11].addr2.replace(":", "")
+        dst = pkt[Dot11].addr1.replace(":", "")
+        to_DS = pkt[Dot11].FCfield & 0x1 !=0
+        from_DS = pkt[Dot11].FCfield & 0x2 !=0
+
+        # If the packet id from DS
+        if from_DS == True and src == APmac:
+            nonce = hexlify(pkt[Raw].load)[26:90]
+            mic = hexlify(pkt[Raw].load)[154:186]
+
+            # If we have a nonce and an empty mac we have the first message
+            if nonce != emptyNONCE and mic == emptyMIC:
+                APmac = src; Clientmac = dst
+                print("M1")
+                ANonce = nonce
+            
+            # Else if the client and ap are the right ones and we have a mic and a nonce it's the message 3
+            elif src == APmac and dst == Clientmac and nonce != emptyNONCE and mic != emptyMIC:
+                print("M3")
+        # Else if it's to DS
+        elif to_DS == True and dst == APmac:
+            nonce = hexlify(pkt[Raw].load)[26:90]
+            mic = hexlify(pkt[Raw].load)[154:186]
+            # If the client and ap are the right and we have a nonce and a mic we have the second message
+            if src == Clientmac and dst == APmac and nonce != emptyNONCE and mic != emptyMIC:
+                print("M2")
+                SNonce = nonce
+
+            # Else if the client and ap are the right and we have no nonce and a mic we have the 4th message
+            elif src == Clientmac and dst == APmac and nonce == emptyNONCE and mic != emptyMIC:
+                print("M4")
+                mic_to_test = a2b_hex(mic)
+
+                # retrieve data
+                data = raw(pkt[EAPOL]).replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+                print(data)
+
+
+    ### This part is a fix for parsing packets in Windows ###
+    # This is the same process as the code above
+
+    # Check for association request
+    elif pkt.haslayer(Dot11AssoReq):
+        # the mac is broken here for some reason so we have to get it manualy
+        dst = ''.join('%02x' % b for b in raw(pkt)[18:24]) 
+        src = ''.join('%02x' % b for b in raw(pkt)[24:30])
+        to_DS = raw(pkt)[15] & 0x1 !=0
+        if to_DS == True and dst == APmac:
+            nonce = hexlify(pkt.payload.payload[2].info[18:18+32])
+            mic = hexlify(pkt.payload.payload.payload.payload.info[82:82+16])
+            if src == Clientmac and dst == APmac and nonce != emptyNONCE and mic != emptyMIC:
+                print("M2")
+                SNonce = nonce
+            elif src == Clientmac and dst == APmac and nonce == emptyNONCE and mic != emptyMIC:
+                print("M4")
+                mic_to_test = a2b_hex(mic)
+                data = pkt.payload.payload.payload.payload.info[1:].replace(mic_to_test, b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
 
 print ("\n\nValues used to derivate keys")
 print ("============================")
-print ("Passphrase: ",passPhrase,"\n")
-print ("SSID: ",ssid,"\n")
-print ("AP Mac: ",b2a_hex(APmac),"\n")
-print ("CLient Mac: ",b2a_hex(Clientmac),"\n")
-print ("AP Nonce: ",b2a_hex(ANonce),"\n")
-print ("Client Nonce: ",b2a_hex(SNonce),"\n")
+print ("Passphrase:\t",passPhrase)
+print ("SSID:\t\t",ssid)
+print ("AP Mac:\t\t",APmac.encode())
+print ("Cient Mac:\t",Clientmac.encode())
+print ("AP Nonce:\t",ANonce)
+print ("Client Nonce:\t",SNonce)
+
+B = min(a2b_hex(APmac),a2b_hex(Clientmac))+max(a2b_hex(APmac),a2b_hex(Clientmac))+min(a2b_hex(ANonce),a2b_hex(SNonce))+max(a2b_hex(ANonce),a2b_hex(SNonce))
 
 #calculate 4096 rounds to obtain the 256 bit (32 oct) PMK
 passPhrase = str.encode(passPhrase)
@@ -87,10 +158,10 @@ mic = hmac.new(ptk[0:16],data,hashlib.sha1)
 
 print ("\nResults of the key expansion")
 print ("=============================")
-print ("PMK:\t\t",pmk.hex(),"\n")
-print ("PTK:\t\t",ptk.hex(),"\n")
-print ("KCK:\t\t",ptk[0:16].hex(),"\n")
-print ("KEK:\t\t",ptk[16:32].hex(),"\n")
-print ("TK:\t\t",ptk[32:48].hex(),"\n")
-print ("MICK:\t\t",ptk[48:64].hex(),"\n")
-print ("MIC:\t\t",mic.hexdigest(),"\n")
+print ("PMK:\t\t",pmk.hex())
+print ("PTK:\t\t",ptk.hex())
+print ("KCK:\t\t",ptk[0:16].hex())
+print ("KEK:\t\t",ptk[16:32].hex())
+print ("TK:\t\t",ptk[32:48].hex())
+print ("MICK:\t\t",ptk[48:64].hex())
+print ("MIC:\t\t",mic.hexdigest())
